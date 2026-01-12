@@ -1,3 +1,27 @@
 public class ConnectionsImpl <T > implements Connections <T >{
-    
+    private final ConcurrentHashMap<Integer, ConnectionHandler<T>> hand=new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Set<Integer>> sub=new ConcurrentHashMap<>();
+    public void connect(){
+
+    }
+    public boolean send(int connectionId, T msg){
+        ConnectionHandler<T> h=hand.get(connectionId);
+        if (h==null) 
+            return false;
+        h.send(msg);
+        return true;
+    }
+    public void send(String channel, T msg){
+         Set<Integer> set=sub.get(channel);
+        if (set==null) 
+            return;
+        for (Integer id:set)
+            send(id, msg);
+    }
+
+    public void disconnect(int connectionId){
+        handlers.remove(connectionId);
+        for (Set<Integer> set:subscribers.values())
+            set.remove(connectionId);
+    }
 }
