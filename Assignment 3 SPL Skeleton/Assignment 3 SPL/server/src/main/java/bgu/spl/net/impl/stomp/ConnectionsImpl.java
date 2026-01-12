@@ -1,5 +1,4 @@
-package bgu.spl.net.impl;
-
+package bgu.spl.net.impl.stomp;
 import bgu.spl.net.srv.ConnectionHandler;
 import bgu.spl.net.srv.Connections;
 
@@ -12,6 +11,7 @@ public class ConnectionsImpl<T> implements Connections<T>{
     private final ConcurrentHashMap<String,Set<Integer>> channelSub=new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Integer,Set<String>> clientSub=new ConcurrentHashMap<>();
 
+    @Override
     public void connect(int connectionId,ConnectionHandler<T> handler){
         clientHandlers.put(connectionId,handler);
         clientSub.put(connectionId, ConcurrentHashMap.newKeySet());
