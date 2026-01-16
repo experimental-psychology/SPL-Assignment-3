@@ -11,6 +11,7 @@ import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
+import java.util.Iterator;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
@@ -57,20 +58,33 @@ public class Reactor<T> implements Server<T> {
                 selector.select();
                 runSelectionThreadTasks();
 
-                for (SelectionKey key : selector.selectedKeys()) {
-                    if (!key.isValid()) continue;
+                // תיקון 1: שימוש ב-Iterator עם remove מיידי
+                Iterator<SelectionKey> iter = selector.selectedKeys().iterator();
+                while (iter.hasNext()) {
+                    SelectionKey key = iter.next();
+                    iter.remove(); // הסרה מיידית - מונע לולאה אינסופית במקרה של חריגה
 
-                    if (key.isAcceptable()) {
-                        handleAccept(serverSock, selector);
-                    } else {
-                        handleReadWrite(key);
+                    // תיקון 3: try-catch פנימי למניעת קריסת השרת
+                    try {
+                       if (!key.isValid()) {
+                            cleanupKey(key);
+                            continue;
+                        }
+                        if (key.isAcceptable()) {
+                            handleAccept(serverSock, selector);
+                        } else {
+                            handleReadWrite(key);
+                        }
+                    } catch (Exception ex) {
+                        System.err.println("Error handling client: " + ex.getMessage());
+                        ex.printStackTrace();
+                        cleanupKey(key);
                     }
                 }
-
-                selector.selectedKeys().clear();
             }
 
         } catch (ClosedSelectorException ex) {
+            // סגירה רגילה
         } catch (IOException ex) {
             ex.printStackTrace();
         }
@@ -121,28 +135,64 @@ public class Reactor<T> implements Server<T> {
     }
 
     private void handleReadWrite(SelectionKey key) {
-        @SuppressWarnings("unchecked")
-        NonBlockingConnectionHandler<T> handler = (NonBlockingConnectionHandler<T>) key.attachment();
+        NonBlockingConnectionHandler<T> handler =
+                (NonBlockingConnectionHandler<T>) key.attachment();
 
         if (key.isReadable()) {
             key.interestOps(key.interestOps() & ~SelectionKey.OP_READ);
             Runnable task = handler.continueRead();
-            if (task != null) pool.submit(handler, task);
+            if (task != null) {
+                pool.submit(handler, task);
+            } else {
+                cleanupConnection(key, handler);
+            }
         }
 
         if (key.isValid() && key.isWritable()) {
             handler.continueWrite();
         }
     }
+    /**
+     * תיקון 2: מתודה לסגירה מסודרת של חיבור - כולל disconnect מפורש
+     */
+    private void cleanupConnection(SelectionKey key, NonBlockingConnectionHandler<T> handler) {
+        if (key != null) {
+            key.cancel();
+        }
+        
+        // ניקוי יחיד דרך מנהל החיבורים.
+        // ConnectionsImpl.disconnect כבר מבצע handler.close() שמבצע channel.close().
+        if (handler != null) {
+            connections.disconnect(handler.getConnectionId());
+        }
+    }
+    /**
+     * ניקוי כללי במקרה של שגיאה
+     */
+    private void cleanupKey(SelectionKey key) {
+        if (key == null) return;
+        NonBlockingConnectionHandler<T> handler =
+                (NonBlockingConnectionHandler<T>) key.attachment();
+        cleanupConnection(key, handler);
+    }
 
     private void runSelectionThreadTasks() {
         while (!selectorTasks.isEmpty()) {
-            selectorTasks.remove().run();
+            Runnable task = selectorTasks.poll();
+            if (task != null) {
+                try {
+                    task.run();
+                } catch (Exception ex) {
+                    System.err.println("Error in selector task: " + ex.getMessage());
+                }
+            }
         }
     }
 
     @Override
     public void close() throws IOException {
-        selector.close();
+        if (selector != null) {
+            selector.close();
+        }
     }
 }

@@ -1,27 +1,42 @@
-CFLAGS:=-c -Wall -Weffc++ -g -std=c++11 -Iinclude
-LDFLAGS:=-lboost_system -lpthread
+CXX = g++
+CXXFLAGS = -std=c++11 -Wall -Weffc++ -pthread -g
+LDFLAGS = -lboost_system -lpthread
 
-all: EchoClient
+# Directories
+SRC_DIR = src
+INCLUDE_DIR = include
+BIN_DIR = bin
+OBJ_DIR = obj
 
-EchoClient: bin/ConnectionHandler.o bin/echoClient.o
-	g++ -o bin/EchoClient bin/ConnectionHandler.o bin/echoClient.o $(LDFLAGS)
+# Source and object files
+SOURCES = $(SRC_DIR)/StompClient.cpp $(SRC_DIR)/ConnectionHandler.cpp $(SRC_DIR)/event.cpp
+OBJECTS = $(patsubst $(SRC_DIR)/%.cpp, $(OBJ_DIR)/%.o, $(SOURCES))
+TARGET = $(BIN_DIR)/StompWCIClient
 
-StompWCIClient: bin/ConnectionHandler.o bin/StompClient.obin/event.o
-	g++ -o bin/StompWCIClient bin/ConnectionHandler.o bin/StompClient.o $(LDFLAGS)
+# Include paths
+CXXFLAGS += -I$(INCLUDE_DIR)
 
-bin/ConnectionHandler.o: src/ConnectionHandler.cpp
-	g++ $(CFLAGS) -o bin/ConnectionHandler.o src/ConnectionHandler.cpp
+# Default target
+all: $(TARGET)
 
-bin/echoClient.o: src/echoClient.cpp
-	g++ $(CFLAGS) -o bin/echoClient.o src/echoClient.cpp
+# Create directories
+$(OBJ_DIR):
+	mkdir -p $(OBJ_DIR)
 
-bin/event.o: src/event.cpp
-	g++ $(CFLAGS) -o bin/event.o src/event.cpp
+$(BIN_DIR):
+	mkdir -p $(BIN_DIR)
 
-bin/StompClient.o: src/StompClient.cpp
-	g++ $(CFLAGS) -o bin/StompClient.o src/StompClient.cpp
+# Compile source files
+$(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp | $(OBJ_DIR)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-.PHONY: clean
+# Link the executable
+$(TARGET): $(OBJECTS) | $(BIN_DIR)
+	$(CXX) $(LDFLAGS) $^ -o $@
+
+# Clean build artifacts
 clean:
-	rm -f bin/*
-	
+	rm -rf $(OBJ_DIR) $(BIN_DIR)
+
+# Phony targets
+.PHONY: all clean

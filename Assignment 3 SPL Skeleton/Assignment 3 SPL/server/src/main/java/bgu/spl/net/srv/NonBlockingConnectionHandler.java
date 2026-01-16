@@ -1,3 +1,4 @@
+// bgu/spl/net/srv/NonBlockingConnectionHandler.java
 package bgu.spl.net.srv;
 
 import bgu.spl.net.api.MessageEncoderDecoder;
@@ -38,6 +39,10 @@ public class NonBlockingConnectionHandler<T> implements ConnectionHandler<T> {
         this.reactor = reactor;
         this.connections = connections;
         this.connectionId = connectionId;
+    }
+
+    public int getConnectionId() {
+        return connectionId;
     }
 
     public Runnable continueRead() {
@@ -84,9 +89,12 @@ public class NonBlockingConnectionHandler<T> implements ConnectionHandler<T> {
         while (!writeQueue.isEmpty()) {
             try {
                 ByteBuffer top = writeQueue.peek();
+                if (top == null) break;
+
                 chan.write(top);
                 if (top.hasRemaining()) return;
-                writeQueue.remove();
+
+                writeQueue.poll();
             } catch (IOException ex) {
                 connections.disconnect(connectionId);
                 return;
@@ -116,11 +124,8 @@ public class NonBlockingConnectionHandler<T> implements ConnectionHandler<T> {
     }
 
     @Override
-    public void close() {
-        try {
-            chan.close();
-        } catch (IOException ignored) {
-        }
+    public void close() throws IOException {
+        chan.close();
     }
 
     public boolean isClosed() {

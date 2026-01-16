@@ -46,35 +46,41 @@ public class BlockingConnectionHandler<T> implements Runnable, ConnectionHandler
             while (connected && !protocol.shouldTerminate() && (read = in.read()) >= 0) {
                 T nextMessage = encdec.decodeNextByte((byte) read);
                 if (nextMessage != null) {
-      
                     protocol.process(nextMessage);
                 }
             }
         } catch (IOException ex) {
-         
+            // שגיאת IO - חיבור נסגר
         } finally {
             connected = false;
             connections.disconnect(connectionId);
         }
     }
+    
     @Override
     public void close() throws IOException {
         connected = false;
         sock.close();
     }
+    
     @Override
     public void send(T msg) {
-        if (msg == null) return;
-
-        byte[] bytes = encdec.encode(msg);
+        if (msg == null || !connected) return;
 
         synchronized (writeLock) {
             if (!connected || out == null) return;
+            
             try {
+                byte[] bytes = encdec.encode(msg);
                 out.write(bytes);
                 out.flush();
             } catch (IOException e) {
                 connected = false;
+                // תיקון: סגירת הסוקט כדי לשחרר את ה-read החוסם
+                try {
+                    sock.close();
+                } catch (IOException ignored) {
+                }
                 connections.disconnect(connectionId);
             }
         }

@@ -1,3 +1,4 @@
+// bgu/spl/net/impl/stomp/StompMessagingProtocolImpl.java
 package bgu.spl.net.impl.stomp;
 
 import bgu.spl.net.api.StompMessagingProtocol;
@@ -9,7 +10,7 @@ import java.util.Map;
 public class StompMessagingProtocolImpl implements StompMessagingProtocol<String> {
 
     private int connectionId;
-    private ConnectionsImpl<String> connections;
+    private Connections<String> connections;
     private volatile boolean shouldTerminate = false;
 
     private boolean loggedIn = false;
@@ -18,7 +19,7 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
     @Override
     public void start(int connectionId, Connections<String> connections) {
         this.connectionId = connectionId;
-        this.connections = (ConnectionsImpl<String>) connections;
+        this.connections = connections;
     }
 
     @Override
@@ -33,28 +34,17 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
             return;
         }
 
-        // Only CONNECT is allowed before login
         if (!loggedIn && !"CONNECT".equals(frame.command)) {
             sendErrorAndClose(frame, "Not connected", frame.headers.get("receipt"), frame.raw);
             return;
         }
 
         switch (frame.command) {
-            case "CONNECT":
-                handleConnect(frame);
-                break;
-            case "SUBSCRIBE":
-                handleSubscribe(frame);
-                break;
-            case "UNSUBSCRIBE":
-                handleUnsubscribe(frame);
-                break;
-            case "SEND":
-                handleSend(frame);
-                break;
-            case "DISCONNECT":
-                handleDisconnect(frame);
-                break;
+            case "CONNECT":     handleConnect(frame);     break;
+            case "SUBSCRIBE":   handleSubscribe(frame);   break;
+            case "UNSUBSCRIBE": handleUnsubscribe(frame); break;
+            case "SEND":        handleSend(frame);        break;
+            case "DISCONNECT":  handleDisconnect(frame);  break;
             default:
                 sendErrorAndClose(frame, "Unknown command", frame.headers.get("receipt"), frame.raw);
         }
@@ -65,8 +55,6 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
         return shouldTerminate;
     }
 
-    // ---------- Handlers ----------
-
     private void handleConnect(Frame frame) {
         if (loggedIn) {
             sendErrorAndClose(frame, "User already logged in", frame.headers.get("receipt"), frame.raw);
@@ -75,19 +63,18 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
 
         String login = frame.headers.get("login");
         String passcode = frame.headers.get("passcode");
-
         if (login == null || passcode == null) {
             sendErrorAndClose(frame, "Missing login or passcode", frame.headers.get("receipt"), frame.raw);
             return;
         }
 
-        // New-user / wrong-password / already-logged-in logic should be in ConnectionsImpl (shared state)
-        ConnectionsImpl.LoginResult res = connections.tryLogin(login, passcode, connectionId);
-        if (res == ConnectionsImpl.LoginResult.WRONG_PASSWORD) {
+        Connections.LoginResult res = connections.tryLogin(login, passcode, connectionId);
+
+        if (res == Connections.LoginResult.WRONG_PASSWORD) {
             sendErrorAndClose(frame, "Wrong password", frame.headers.get("receipt"), frame.raw);
             return;
         }
-        if (res == ConnectionsImpl.LoginResult.ALREADY_LOGGED_IN) {
+        if (res == Connections.LoginResult.ALREADY_LOGGED_IN) {
             sendErrorAndClose(frame, "User already logged in", frame.headers.get("receipt"), frame.raw);
             return;
         }
@@ -95,22 +82,19 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
         loggedIn = true;
         username = login;
 
-        connections.send(connectionId, buildConnected());
+        connections.send(connectionId, "CONNECTED\nversion:1.2\n\n");
         maybeSendReceipt(frame);
     }
 
     private void handleSubscribe(Frame frame) {
-        String destination = frame.headers.get("destination");
-        String subId = frame.headers.get("id");
-
-        if (destination == null || subId == null) {
+        String dest = frame.headers.get("destination");
+        String id = frame.headers.get("id");
+        if (dest == null || id == null) {
             sendErrorAndClose(frame, "Missing destination or id", frame.headers.get("receipt"), frame.raw);
             return;
         }
 
-        // IMPORTANT: use the upgraded ConnectionsImpl API (store subscriptionId)
-        boolean ok = connections.subscribe(destination, connectionId, subId);
-        if (!ok) {
+        if (!connections.subscribe(dest, connectionId, id)) {
             sendErrorAndClose(frame, "Subscription id already exists", frame.headers.get("receipt"), frame.raw);
             return;
         }
@@ -119,14 +103,13 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
     }
 
     private void handleUnsubscribe(Frame frame) {
-        String subId = frame.headers.get("id");
-        if (subId == null) {
+        String id = frame.headers.get("id");
+        if (id == null) {
             sendErrorAndClose(frame, "Missing id", frame.headers.get("receipt"), frame.raw);
             return;
         }
 
-        String removedChannel = connections.unsubscribe(subId, connectionId);
-        if (removedChannel == null) {
+        if (connections.unsubscribe(id, connectionId) == null) {
             sendErrorAndClose(frame, "Subscription ID not found", frame.headers.get("receipt"), frame.raw);
             return;
         }
@@ -135,95 +118,59 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
     }
 
     private void handleSend(Frame frame) {
-        String destination = frame.headers.get("destination");
-        if (destination == null) {
+        String dest = frame.headers.get("destination");
+        if (dest == null) {
             sendErrorAndClose(frame, "Missing destination", frame.headers.get("receipt"), frame.raw);
             return;
         }
 
-        // sender must be subscribed
-        if (!connections.isSubscribed(connectionId, destination)) {
+        if (!connections.isSubscribed(connectionId, dest)) {
             sendErrorAndClose(frame, "User not subscribed to topic", frame.headers.get("receipt"), frame.raw);
             return;
         }
 
-        int messageId = connections.nextMessageId(); // global counter in ConnectionsImpl
         String body = frame.body == null ? "" : frame.body;
+        int msgId = connections.nextMessageId();
+        Map<Integer, String> subs = connections.getChannelSubscribersSnapshot(dest);
 
-        // Per-recipient MESSAGE: subscription header differs per client
-        Map<Integer, String> subscribers = connections.getChannelSubscribersSnapshot(destination);
-        for (Map.Entry<Integer, String> e : subscribers.entrySet()) {
-            int targetConnId = e.getKey();
-            String targetSubId = e.getValue();
-
-            String msgToSend = buildMessage(destination, targetSubId, messageId, body);
-            connections.send(targetConnId, msgToSend);
+        for (Map.Entry<Integer, String> e : subs.entrySet()) {
+            String msg =
+                    "MESSAGE\n" +
+                    "destination:" + dest + "\n" +
+                    "subscription:" + e.getValue() + "\n" +
+                    "message-id:" + msgId + "\n\n" +
+                    body;
+            connections.send(e.getKey(), msg);
         }
 
         maybeSendReceipt(frame);
     }
 
     private void handleDisconnect(Frame frame) {
-        // DISCONNECT must include receipt
         String receipt = frame.headers.get("receipt");
         if (receipt == null) {
-            sendErrorAndClose(frame, "DISCONNECT must include receipt", null, frame.raw);
+            sendErrorAndClose(frame, "DISCONNECT must include receipt header", null, frame.raw);
             return;
         }
 
-        connections.send(connectionId, buildReceipt(receipt));
-
-        shouldTerminate = true;
-        // will also cleanup subscriptions + logout via ConnectionsImpl.disconnect if you implemented it that way
-        connections.disconnect(connectionId);
+        connections.send(connectionId, "RECEIPT\nreceipt-id:" + receipt + "\n\n");
+        shouldTerminate = true; // graceful close by handler after flush
     }
-
-    // ---------- Helpers ----------
 
     private void maybeSendReceipt(Frame frame) {
-        String receipt = frame.headers.get("receipt");
-        if (receipt != null) {
-            connections.send(connectionId, buildReceipt(receipt));
+        String r = frame.headers.get("receipt");
+        if (r != null) {
+            connections.send(connectionId, "RECEIPT\nreceipt-id:" + r + "\n\n");
         }
     }
 
-    private void sendErrorAndClose(Frame frame, String msg, String receiptId, String originalFrame) {
-        connections.send(connectionId, buildError(msg, receiptId, originalFrame));
-        shouldTerminate = true;
-        connections.disconnect(connectionId);
-    }
-
-    // NO '\0' here — Encoder adds it
-    private String buildConnected() {
-        return "CONNECTED\nversion:1.2\n\n";
-    }
-
-    private String buildReceipt(String receiptId) {
-        return "RECEIPT\nreceipt-id:" + receiptId + "\n\n";
-    }
-
-    private String buildMessage(String destination, String subscriptionId, int messageId, String body) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("MESSAGE\n");
-        sb.append("destination:").append(destination).append("\n");
-        sb.append("subscription:").append(subscriptionId).append("\n");
-        sb.append("message-id:").append(messageId).append("\n");
+    private void sendErrorAndClose(Frame frame, String msg, String rId, String raw) {
+        StringBuilder sb = new StringBuilder("ERROR\nmessage:").append(msg).append("\n");
+        if (rId != null) sb.append("receipt-id:").append(rId).append("\n");
         sb.append("\n");
-        if (body != null && !body.isEmpty()) sb.append(body);
-        return sb.toString();
-    }
-
-    private String buildError(String message, String receiptId, String originalFrame) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("ERROR\n");
-        sb.append("message:").append(message == null ? "" : message).append("\n");
-        if (receiptId != null) sb.append("receipt-id:").append(receiptId).append("\n");
-        sb.append("\n");
-        if (originalFrame != null && !originalFrame.isEmpty()) {
-            sb.append("The message:\n-----\n");
-            sb.append(stripNull(originalFrame)).append("\n-----\n");
-        }
-        return sb.toString();
+        if (raw != null) sb.append("The message:\n-----\n").append(stripNull(raw)).append("\n-----\n");
+        connections.send(connectionId, sb.toString());
+        shouldTerminate = true; // handler will close after pending writes are flushed
     }
 
     private static String stripNull(String s) {
@@ -232,7 +179,7 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
         return i >= 0 ? s.substring(0, i) : s;
     }
 
-    // ---------- Frame parser ----------
+    // ------- Frame parsing -------
 
     private static class Frame {
         String command;
@@ -241,7 +188,7 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
         String raw;
 
         static Frame parse(String msg) {
-            if (msg == null) throw new IllegalArgumentException("null frame");
+            if (msg == null) throw new IllegalArgumentException("null");
             Frame f = new Frame();
             f.raw = msg;
 
@@ -251,9 +198,7 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
             f.body = (sep >= 0) ? clean.substring(sep + 2) : "";
 
             String[] lines = head.split("\n");
-            if (lines.length == 0 || lines[0].trim().isEmpty()) {
-                throw new IllegalArgumentException("missing command");
-            }
+            if (lines.length == 0 || lines[0].trim().isEmpty()) throw new IllegalArgumentException("empty");
             f.command = lines[0].trim();
 
             f.headers = new HashMap<>();
@@ -261,10 +206,10 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
                 String line = lines[i].trim();
                 if (line.isEmpty()) continue;
                 int c = line.indexOf(':');
-                if (c <= 0) throw new IllegalArgumentException("bad header: " + line);
-                f.headers.put(line.substring(0, c).trim(), line.substring(c + 1).trim());
+                if (c > 0) f.headers.put(line.substring(0, c).trim(), line.substring(c + 1).trim());
             }
             return f;
         }
     }
+    
 }
