@@ -1,8 +1,9 @@
-// bgu/spl/net/impl/stomp/StompMessagingProtocolImpl.java
+
 package bgu.spl.net.impl.stomp;
 
 import bgu.spl.net.api.StompMessagingProtocol;
 import bgu.spl.net.srv.Connections;
+import bgu.spl.net.impl.data.Database;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -82,6 +83,9 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
         loggedIn = true;
         username = login;
 
+        // SQL logging
+        Database.getInstance().login(connectionId, username, passcode);
+
         connections.send(connectionId, "CONNECTED\nversion:1.2\n\n");
         maybeSendReceipt(frame);
     }
@@ -124,7 +128,8 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
             return;
         }
 
-        if (!connections.isSubscribed(connectionId, dest)) {
+        boolean isSubscribed = connections.isSubscribed(connectionId, dest);
+        if (!isSubscribed) {
             sendErrorAndClose(frame, "User not subscribed to topic", frame.headers.get("receipt"), frame.raw);
             return;
         }
@@ -143,6 +148,9 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
             connections.send(e.getKey(), msg);
         }
 
+        // Log file report to SQL
+        Database.getInstance().trackFileUpload(username, "unknown-file", dest);
+
         maybeSendReceipt(frame);
     }
 
@@ -153,8 +161,11 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
             return;
         }
 
+        // SQL logout
+        Database.getInstance().logout(connectionId);
+
         connections.send(connectionId, "RECEIPT\nreceipt-id:" + receipt + "\n\n");
-        shouldTerminate = true; // graceful close by handler after flush
+        shouldTerminate = true;
     }
 
     private void maybeSendReceipt(Frame frame) {
@@ -170,7 +181,7 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
         sb.append("\n");
         if (raw != null) sb.append("The message:\n-----\n").append(stripNull(raw)).append("\n-----\n");
         connections.send(connectionId, sb.toString());
-        shouldTerminate = true; // handler will close after pending writes are flushed
+        shouldTerminate = true;
     }
 
     private static String stripNull(String s) {
@@ -178,8 +189,6 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
         int i = s.indexOf('\0');
         return i >= 0 ? s.substring(0, i) : s;
     }
-
-    // ------- Frame parsing -------
 
     private static class Frame {
         String command;
@@ -211,5 +220,4 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
             return f;
         }
     }
-    
 }

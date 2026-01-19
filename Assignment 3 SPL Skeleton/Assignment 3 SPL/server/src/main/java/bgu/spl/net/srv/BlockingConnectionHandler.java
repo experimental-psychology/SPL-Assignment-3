@@ -37,6 +37,7 @@ public class BlockingConnectionHandler<T> implements Runnable, ConnectionHandler
     @Override
     public void run() {
         try (Socket ignored = this.sock) {
+            System.out.println("[HANDLER] Connection " + connectionId + " started");
             in = new BufferedInputStream(sock.getInputStream());
             out = new BufferedOutputStream(sock.getOutputStream());
 

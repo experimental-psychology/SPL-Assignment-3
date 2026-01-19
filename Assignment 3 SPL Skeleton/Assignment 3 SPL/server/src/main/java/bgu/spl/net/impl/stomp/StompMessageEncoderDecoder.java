@@ -17,7 +17,9 @@ public class StompMessageEncoderDecoder implements MessageEncoderDecoder<String>
     public String decodeNextByte(byte nextByte) {
         // frame ends on '\0'  :contentReference[oaicite:7]{index=7}
         if (nextByte == '\0') {
-            return popString();
+            String result = popString();
+            System.out.println("[DECODER] Got complete message: " + result.replace("\n", "\\n"));
+            return result;
         }
         pushByte(nextByte);
         return null;

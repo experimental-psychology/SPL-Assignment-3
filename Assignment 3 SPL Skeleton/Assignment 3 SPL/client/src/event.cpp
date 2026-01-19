@@ -1,160 +1,155 @@
-#include "event.h"
-#include <fstream>
-#include <sstream>
+#include "../include/event.h"
+#include "../include/json.hpp"
 #include <iostream>
-#include <algorithm>
+#include <fstream>
+#include <string>
+#include <map>
+#include <vector>
+#include <sstream>
+using json = nlohmann::json;
 
-// Forward declarations
-static Event parseEvent(const std::string& event_json);
-static std::map<std::string, std::string> parseUpdates(const std::string& json, const std::string& key);
+Event::Event(std::string team_a_name, std::string team_b_name, std::string name, int time,
+             std::map<std::string, std::string> game_updates, std::map<std::string, std::string> team_a_updates,
+             std::map<std::string, std::string> team_b_updates, std::string description)
+    : team_a_name(team_a_name), team_b_name(team_b_name), name(name),
+      time(time), game_updates(game_updates), team_a_updates(team_a_updates),
+      team_b_updates(team_b_updates), description(description)
+{
+}
+Event::Event(const std::string & frame_body) : team_a_name(""), team_b_name(""), name(""), time(0), game_updates(), team_a_updates(), team_b_updates(), description(""), event_owner("")
+{
+    std::istringstream stream(frame_body);
+    std::string line;
+    std::string currentSection = "";
 
-names_and_events parseEventsFile(const std::string& json_path) {
-    names_and_events result;
-    std::ifstream file(json_path);
-    
-    if (!file.is_open()) {
-        throw std::runtime_error("Could not open file: " + json_path);
-    }
-    
-    std::string content((std::istreambuf_iterator<char>(file)),
-                        std::istreambuf_iterator<char>());
-    file.close();
-    
-    // Extract team_a
-    size_t team_a_pos = content.find("\"team a\"");
-    if (team_a_pos != std::string::npos) {
-        size_t quote_pos = content.find("\"", team_a_pos + 9);
-        size_t end_quote = content.find("\"", quote_pos + 1);
-        result.team_a = content.substr(quote_pos + 1, end_quote - quote_pos - 1);
-    }
-    
-    // Extract team_b
-    size_t team_b_pos = content.find("\"team b\"");
-    if (team_b_pos != std::string::npos) {
-        size_t quote_pos = content.find("\"", team_b_pos + 9);
-        size_t end_quote = content.find("\"", quote_pos + 1);
-        result.team_b = content.substr(quote_pos + 1, end_quote - quote_pos - 1);
-    }
-    
-    // Extract events array
-    size_t events_pos = content.find("\"events\"");
-    if (events_pos == std::string::npos) {
-        throw std::runtime_error("No events found in JSON");
-    }
-    
-    size_t array_start = content.find("[", events_pos);
-    size_t array_end = content.rfind("]");
-    
-    std::string events_str = content.substr(array_start + 1, array_end - array_start - 1);
-    
-    // Parse each event
-    size_t event_start = 0;
-    int brace_count = 0;
-    bool in_event = false;
-    
-    for (size_t i = 0; i < events_str.length(); ++i) {
-        if (events_str[i] == '{') {
-            if (brace_count == 0) {
-                event_start = i;
-                in_event = true;
-            }
-            brace_count++;
-        } else if (events_str[i] == '}') {
-            brace_count--;
-            if (brace_count == 0 && in_event) {
-                std::string event_json = events_str.substr(event_start, i - event_start + 1);
-                Event e = parseEvent(event_json);
-                result.events.push_back(e);
-                in_event = false;
+    while (std::getline(stream, line)) {
+        if (line.empty()) continue;
+        if (!line.empty() && line[line.size() - 1] == '\r') line.erase(line.size() - 1);
+
+        if (line.find("user:") == 0) event_owner = line.substr(5);
+        else if (line.find("team a:") == 0 && line.find("updates") == std::string::npos) team_a_name = line.substr(7);
+        else if (line.find("team b:") == 0 && line.find("updates") == std::string::npos) team_b_name = line.substr(7);
+        else if (line.find("event name:") == 0) name = line.substr(11);
+        else if (line.find("time:") == 0) time = std::stoi(line.substr(5));
+        else if (line.find("general game updates:") == 0) currentSection = "gen";
+        else if (line.find("team a updates:") == 0) currentSection = "a";
+        else if (line.find("team b updates:") == 0) currentSection = "b";
+        else if (line.find("description:") == 0) currentSection = "desc";
+        else if (line.find("    ") == 0) { 
+            size_t colon = line.find(':');
+            if (colon != std::string::npos) {
+                std::string key = line.substr(4, colon - 4);
+                std::string val = line.substr(colon + 1);
+                if (currentSection == "gen") game_updates[key] = val;
+                else if (currentSection == "a") team_a_updates[key] = val;
+                else if (currentSection == "b") team_b_updates[key] = val;
             }
         }
+        else if (currentSection == "desc") {
+            description += line + "\n";
+        }
     }
-    
-    return result;
+}
+Event::~Event()
+{
 }
 
-static Event parseEvent(const std::string& event_json) {
-    Event e;
-    
-    size_t name_pos = event_json.find("\"event name\"");
-    if (name_pos != std::string::npos) {
-        size_t quote_pos = event_json.find("\"", name_pos + 13);
-        size_t end_quote = event_json.find("\"", quote_pos + 1);
-        e.event_name = event_json.substr(quote_pos + 1, end_quote - quote_pos - 1);
-    }
-    
-    size_t time_pos = event_json.find("\"time\"");
-    if (time_pos != std::string::npos) {
-        size_t colon_pos = event_json.find(":", time_pos);
-        size_t comma_pos = event_json.find(",", colon_pos);
-        if (comma_pos == std::string::npos) comma_pos = event_json.find("}", colon_pos);
-        std::string time_str = event_json.substr(colon_pos + 1, comma_pos - colon_pos - 1);
-        time_str.erase(0, time_str.find_first_not_of(" \t\n\r"));
-        time_str.erase(time_str.find_last_not_of(" \t\n\r") + 1);
-        e.time = std::stoi(time_str);
-    }
-    
-    size_t desc_pos = event_json.find("\"description\"");
-    if (desc_pos != std::string::npos) {
-        size_t quote_pos = event_json.find("\"", desc_pos + 14);
-        size_t end_quote = event_json.rfind("\"");
-        e.description = event_json.substr(quote_pos + 1, end_quote - quote_pos - 1);
-    }
-    
-    e.general_updates = parseUpdates(event_json, "\"general game updates\"");
-    e.team_a_updates = parseUpdates(event_json, "\"team a updates\"");
-    e.team_b_updates = parseUpdates(event_json, "\"team b updates\"");
-    
-    return e;
+const std::string &Event::get_team_a_name() const
+{
+    return this->team_a_name;
 }
+const std::string &Event::get_event_owner() const { return this->event_owner; }
+void Event::set_event_owner(std::string user) { this->event_owner = user; }
+const std::string &Event::get_team_b_name() const
+{
+    return this->team_b_name;
+}
+const std::string &Event::get_name() const
+{
+    return this->name;
+}
+int Event::get_time() const
+{
+    return this->time;
+}
+const std::map<std::string, std::string> &Event::get_game_updates() const
+{
+    return this->game_updates;
+}
+const std::map<std::string, std::string> &Event::get_team_a_updates() const
+{
+    return this->team_a_updates;
+}
+const std::map<std::string, std::string> &Event::get_team_b_updates() const
+{
+    return this->team_b_updates;
+}
+const std::string &Event::get_description() const
+{
+    return this->description;
+}
+names_and_events parseEventsFile(std::string json_path)
+{
+    std::ifstream f(json_path);
+    json data = json::parse(f);
 
-static std::map<std::string, std::string> parseUpdates(const std::string& json, const std::string& key) {
-    std::map<std::string, std::string> updates;
-    size_t key_pos = json.find(key);
-    if (key_pos == std::string::npos) return updates;
-    
-    size_t obj_start = json.find("{", key_pos);
-    if (obj_start == std::string::npos) return updates;
-    
-    int brace_count = 0;
-    size_t obj_end = obj_start;
-    
-    for (size_t i = obj_start; i < json.length(); ++i) {
-        if (json[i] == '{') brace_count++;
-        else if (json[i] == '}') {
-            brace_count--;
-            if (brace_count == 0) {
-                obj_end = i;
-                break;
-            }
+    std::string team_a_name = data["team a"];
+    std::string team_b_name = data["team b"];
+
+    // run over all the events and convert them to Event objects
+    std::vector<Event> events;
+    for (auto &event : data["events"])
+    {
+        std::string name = "";
+        if (event.contains("event name") && !event["event name"].is_null()) {
+            name = event["event name"];
         }
-    }
-    
-    std::string obj_str = json.substr(obj_start + 1, obj_end - obj_start - 1);
-    size_t pos = 0;
-    while (pos < obj_str.length()) {
-        size_t quote_start = obj_str.find("\"", pos);
-        if (quote_start == std::string::npos) break;
-        size_t quote_end = obj_str.find("\"", quote_start + 1);
-        if (quote_end == std::string::npos) break;
         
-        std::string k = obj_str.substr(quote_start + 1, quote_end - quote_start - 1);
-        size_t colon_pos = obj_str.find(":", quote_end);
-        
-        size_t value_start = obj_str.find("\"", colon_pos);
-        if (value_start == std::string::npos) {
-            size_t comma_or_brace = obj_str.find_first_of(",}", colon_pos);
-            std::string v = obj_str.substr(colon_pos + 1, comma_or_brace - colon_pos - 1);
-            v.erase(0, v.find_first_not_of(" \t\n\r"));
-            v.erase(v.find_last_not_of(" \t\n\r") + 1);
-            updates[k] = v;
-            pos = comma_or_brace + 1;
-        } else {
-            size_t value_end = obj_str.find("\"", value_start + 1);
-            std::string v = obj_str.substr(value_start + 1, value_end - value_start - 1);
-            updates[k] = v;
-            pos = value_end + 1;
+        int time = 0;
+        if (event.contains("time") && !event["time"].is_null()) {
+            time = event["time"];
         }
+        
+        std::string description = "";
+        if (event.contains("description") && !event["description"].is_null()) {
+            description = event["description"];
+        }
+        
+        std::string event_owner = "";
+        if (event.contains("event owner") && !event["event owner"].is_null()) {
+            event_owner = event["event owner"];
+        }
+        
+        std::map<std::string, std::string> game_updates;
+        std::map<std::string, std::string> team_a_updates;
+        std::map<std::string, std::string> team_b_updates;
+        for (auto &update : event["general game updates"].items())
+        {
+            if (update.value().is_string())
+                game_updates[update.key()] = update.value();
+            else
+                game_updates[update.key()] = update.value().dump();
+        }
+
+        for (auto &update : event["team a updates"].items())
+        {
+            if (update.value().is_string())
+                team_a_updates[update.key()] = update.value();
+            else
+                team_a_updates[update.key()] = update.value().dump();
+        }
+
+        for (auto &update : event["team b updates"].items())
+        {
+            if (update.value().is_string())
+                team_b_updates[update.key()] = update.value();
+            else
+                team_b_updates[update.key()] = update.value().dump();
+        }
+        
+        events.push_back(Event(team_a_name, team_b_name, name, time, game_updates, team_a_updates, team_b_updates, description));
     }
-    return updates;
+    names_and_events events_and_names{team_a_name, team_b_name, events};
+
+    return events_and_names;
 }

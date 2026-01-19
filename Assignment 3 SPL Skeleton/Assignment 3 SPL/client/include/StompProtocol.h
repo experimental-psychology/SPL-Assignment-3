@@ -1,44 +1,42 @@
 #pragma once
-
-#include "../include/ConnectionHandler.h"
 #include <string>
-#include <vector>
 #include <map>
+#include <vector>
+#include <atomic>
 #include <mutex>
+#include "../include/ConnectionHandler.h"
+#include "../include/event.h" 
 
-// החוזה של הפרוטוקול שלנו
 class StompProtocol {
 private:
-    // --- משתני מצב ---
-    bool isConnected; // האם אנחנו מחוברים?
-    int subscriptionIdCounter; // מונה למזהי הרשמה
-    int receiptIdCounter; // מונה למזהי אישור
+    std::string currentUsername; 
+    std::atomic<int> subscriptionCounter;
+    std::atomic<int> receiptCounter;
+    mutable std::mutex _mutex;
+    std::map<int, std::string> subIdToCanonical;
+    std::map<std::string, int> canonicalToSubId; 
+    std::map<int, std::string> receiptIdToCommand;
+    std::map<std::string, std::string> canonicalToDestination;
 
-    // --- ניהול מנויים ---
-    // Game Name -> Subscription ID (כדי לדעת אם כבר נרשמנו)
-    std::map<std::string, int> topicToSubId; 
+    std::map<std::string, std::vector<Event>> gameReports;
     
-    // Subscription ID -> Game Name (כדי לדעת ממה להתנתק)
-    std::map<int, std::string> subIdToTopic;
+    bool shouldTerminate;
 
-    // --- ניהול אירועים לסיכום (Summary) ---
-    // Game Name -> (Username -> List of Events Strings)
-    // אנחנו שומרים את האירועים כ-Strings כדי להדפיס אותם בסוף
-    std::map<std::string, std::map<std::string, std::vector<std::string>>> gameEvents;
-    
+    static std::string trim(const std::string& value);
+    static std::string normalizeGameName(const std::string& raw);
+    std::string resolveDestinationForCanonical(const std::string& canonical) const;
+    void ensureSummaryFile(std::ofstream& outFile, const std::string& teamA, const std::string& teamB,
+                           const std::vector<Event>& userEvents);
+    void storeEvent(const std::string& canonicalGame, const Event& event);
+
 public:
-    StompProtocol(); // בנאי
+    StompProtocol();
     
-    // פונקציה לעיבוד קלט מהמקלדת (login, join...)
-    // מחזירה true אם הפקודה דורשת שליחה לשרת
-    // מעדכנת את ה-frameOut עם המחרוזת שיש לשלוח
-    bool processKeyboardCommand(const std::string& commandLine, std::string& frameOut);
+    std::vector<std::string> split(const std::string& str, char delimiter);
 
-    // פונקציה לעיבוד הודעות שהתקבלו מהשרת
-    // מחזירה true אם הכל תקין, false אם צריך להתנתק
-    bool processServerFrame(const std::string& frame);
-
-    // האם הלקוח מחובר לוגית?
-    bool shouldTerminate();
-    void setConnected(bool status);
+    std::string processInput(std::string input);
+    void processResponse(std::string frame);
+    bool isTerminated() const;
+    void markConnectionClosed();
+    void resetAfterSession();
 };

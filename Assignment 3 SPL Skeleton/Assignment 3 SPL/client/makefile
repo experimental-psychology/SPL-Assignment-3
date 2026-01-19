@@ -1,42 +1,40 @@
-CXX = g++
-CXXFLAGS = -std=c++11 -Wall -Weffc++ -pthread -g
-LDFLAGS = -lboost_system -lpthread
+CXX := g++
+CFLAGS := -c -Wall -Weffc++ -g -std=c++11 -Iinclude
+LDFLAGS := -lpthread -lboost_system
 
-# Directories
-SRC_DIR = src
-INCLUDE_DIR = include
-BIN_DIR = bin
-OBJ_DIR = obj
+all: StompWCIClient
 
-# Source and object files
-SOURCES = $(SRC_DIR)/StompClient.cpp $(SRC_DIR)/ConnectionHandler.cpp $(SRC_DIR)/event.cpp
-OBJECTS = $(patsubst $(SRC_DIR)/%.cpp, $(OBJ_DIR)/%.o, $(SOURCES))
-TARGET = $(BIN_DIR)/StompWCIClient
+test: bin/StompTests
+	./bin/StompTests
 
-# Include paths
-CXXFLAGS += -I$(INCLUDE_DIR)
+StompWCIClient: bin/ConnectionHandler.o bin/StompClient.o bin/StompProtocol.o bin/event.o
+	$(CXX) -o bin/StompWCIClient bin/ConnectionHandler.o bin/StompClient.o bin/StompProtocol.o bin/event.o $(LDFLAGS)
 
-# Default target
-all: $(TARGET)
+EchoClient: bin/ConnectionHandler.o bin/echoClient.o
+	$(CXX) -o bin/EchoClient bin/ConnectionHandler.o bin/echoClient.o $(LDFLAGS)
 
-# Create directories
-$(OBJ_DIR):
-	mkdir -p $(OBJ_DIR)
 
-$(BIN_DIR):
-	mkdir -p $(BIN_DIR)
+bin/ConnectionHandler.o: src/ConnectionHandler.cpp
+	$(CXX) $(CFLAGS) -o bin/ConnectionHandler.o src/ConnectionHandler.cpp
 
-# Compile source files
-$(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp | $(OBJ_DIR)
-	$(CXX) $(CXXFLAGS) -c $< -o $@
+bin/StompClient.o: src/StompClient.cpp
+	$(CXX) $(CFLAGS) -o bin/StompClient.o src/StompClient.cpp
 
-# Link the executable
-$(TARGET): $(OBJECTS) | $(BIN_DIR)
-	$(CXX) $(LDFLAGS) $^ -o $@
+bin/StompProtocol.o: src/StompProtocol.cpp
+	$(CXX) $(CFLAGS) -o bin/StompProtocol.o src/StompProtocol.cpp
 
-# Clean build artifacts
+bin/event.o: src/event.cpp
+	$(CXX) $(CFLAGS) -o bin/event.o src/event.cpp
+
+bin/StompProtocolTests.o: tests/StompProtocolTests.cpp
+	$(CXX) $(CFLAGS) -o bin/StompProtocolTests.o tests/StompProtocolTests.cpp
+
+bin/StompTests: bin/StompProtocolTests.o bin/StompProtocol.o bin/event.o
+	$(CXX) -o bin/StompTests bin/StompProtocolTests.o bin/StompProtocol.o bin/event.o $(LDFLAGS)
+
+bin/echoClient.o: src/echoClient.cpp
+	$(CXX) $(CFLAGS) -o bin/echoClient.o src/echoClient.cpp
+
+.PHONY: clean
 clean:
-	rm -rf $(OBJ_DIR) $(BIN_DIR)
-
-# Phony targets
-.PHONY: all clean
+	rm -f bin/*
