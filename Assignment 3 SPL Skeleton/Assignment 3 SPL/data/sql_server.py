@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
 """
 Basic Python Server for STOMP Assignment – Stage 3.3
-DO NOT CHANGE the server name or the basic protocol.
-"""
 
+IMPORTANT:
+DO NOT CHANGE the server name or the basic protocol.
+Students should EXTEND this server by implementing
+the methods below.
+"""
 import socket
 import sys
 import threading
 import sqlite3
+import datetime
+
 
 SERVER_NAME = "STOMP_PYTHON_SQL_SERVER"  # DO NOT CHANGE!
 DB_FILE = "stomp_server.db"              # DO NOT CHANGE!
 
-_db_lock = threading.Lock()
 
 def recv_null_terminated(sock: socket.socket) -> str:
     data = b""
@@ -25,95 +29,79 @@ def recv_null_terminated(sock: socket.socket) -> str:
             msg, _ = data.split(b"\0", 1)
             return msg.decode("utf-8", errors="replace")
 
-def send_null_terminated(sock: socket.socket, s: str):
-    sock.sendall(s.encode("utf-8") + b"\0")
 
 def init_database():
-    with sqlite3.connect(DB_FILE) as conn:
-        cur = conn.cursor()
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            username TEXT PRIMARY KEY,
-            password TEXT NOT NULL,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
-        )
-        """)
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS logins (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT NOT NULL,
-            login_ts TEXT DEFAULT CURRENT_TIMESTAMP,
-            logout_ts TEXT,
-            FOREIGN KEY(username) REFERENCES users(username)
-        )
-        """)
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS reported_files (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT NOT NULL,
-            filename TEXT NOT NULL,
-            channel TEXT,
-            ts TEXT DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY(username) REFERENCES users(username)
-        )
-        """)
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    
+    cursor.execute('''CREATE TABLE IF NOT EXISTS users 
+                      (username TEXT PRIMARY KEY, password TEXT)''')
+    
+    cursor.execute('''CREATE TABLE IF NOT EXISTS logins 
+                      (id INTEGER PRIMARY KEY AUTOINCREMENT, 
+                       username TEXT, 
+                       login_time TEXT, 
+                       logout_time TEXT)''')
+    
+    cursor.execute('''CREATE TABLE IF NOT EXISTS reports 
+                      (id INTEGER PRIMARY KEY AUTOINCREMENT, 
+                       username TEXT, 
+                       filename TEXT, 
+                       timestamp TEXT)''')
+    
+    conn.commit()
+    conn.close()
+    print(f"[{SERVER_NAME}] Database initialized.")
+
+
+def execute_sql_command(sql_command: str) -> str:
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute(sql_command)
         conn.commit()
+        conn.close()
+        return "done"
+    except Exception as e:
+        return f"error: {str(e)}"
 
-def is_query(sql: str) -> bool:
-    s = sql.strip().upper()
-    return s.startswith("SELECT") or s.startswith("PRAGMA") or s.startswith("WITH")
 
-def query_to_tsv(cur) -> str:
-    cols = [d[0] for d in cur.description] if cur.description else []
-    rows = cur.fetchall()
-    out = []
-    out.append("\t".join(cols))
-    for r in rows:
-        out.append("\t".join("" if v is None else str(v) for v in r))
-    return "\n".join(out)
+def execute_sql_query(sql_query: str) -> str:
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute(sql_query)
+        rows = cursor.fetchall()
+        conn.close()
+        return "|".join([",".join(map(str, row)) for row in rows]) if rows else "empty"
+    except Exception as e:
+        return f"error: {str(e)}"
 
-def execute_sql(sql: str) -> str:
-    # מריצים הכל תחת lock כדי שלא יהיו התנגשויות קובץ (SQLite + threads)
-    with _db_lock:
-        with sqlite3.connect(DB_FILE) as conn:
-            cur = conn.cursor()
-            if is_query(sql):
-                cur.execute(sql)
-                return query_to_tsv(cur)
-            else:
-                cur.execute(sql)
-                conn.commit()
-                return "done"
 
 def handle_client(client_socket: socket.socket, addr):
     print(f"[{SERVER_NAME}] Client connected from {addr}")
     try:
         while True:
             message = recv_null_terminated(client_socket)
-            if message == "":
+            if not message:
                 break
 
-            print(f"[{SERVER_NAME}] Received:\n{message}")
+            print(f"[{SERVER_NAME}] Processing: {message}")
 
-            try:
-                result = execute_sql(message)
-            except Exception as e:
-                result = f"error\t{type(e).__name__}\t{e}"
+            if message.strip().upper().startswith("SELECT"):
+                response = execute_sql_query(message)
+            else:
+                response = execute_sql_command(message)
 
-            send_null_terminated(client_socket, result)
+            client_socket.sendall((response + "\0").encode("utf-8"))
 
     except Exception as e:
-        print(f"[{SERVER_NAME}] Error handling client {addr}: {e}")
+        print(f"[{SERVER_NAME}] Error: {e}")
     finally:
-        try:
-            client_socket.close()
-        except Exception:
-            pass
-        print(f"[{SERVER_NAME}] Client {addr} disconnected")
+        client_socket.close()
+
 
 def start_server(host="127.0.0.1", port=7778):
-    init_database()
-
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
@@ -125,7 +113,11 @@ def start_server(host="127.0.0.1", port=7778):
 
         while True:
             client_socket, addr = server_socket.accept()
-            t = threading.Thread(target=handle_client, args=(client_socket, addr), daemon=True)
+            t = threading.Thread(
+                target=handle_client,
+                args=(client_socket, addr),
+                daemon=True
+            )
             t.start()
 
     except KeyboardInterrupt:
@@ -136,7 +128,9 @@ def start_server(host="127.0.0.1", port=7778):
         except Exception:
             pass
 
+
 if __name__ == "__main__":
+    init_database()
     port = 7778
     if len(sys.argv) > 1:
         raw_port = sys.argv[1].strip()

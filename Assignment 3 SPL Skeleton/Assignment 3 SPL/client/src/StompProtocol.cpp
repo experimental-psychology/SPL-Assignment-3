@@ -84,7 +84,92 @@ std::string StompProtocol::resolveDestinationForCanonical(const std::string& can
 }
 
 void StompProtocol::storeEvent(const std::string& canonicalGame, const Event& event) {
-    gameReports[canonicalGame].push_back(event);
+    std::string ownerKey = canonicalOwner(event);
+    auto& eventsForUser = gameReports[canonicalGame][ownerKey];
+
+    auto existing = std::find_if(eventsForUser.begin(), eventsForUser.end(), [&](const Event& current) {
+        return current.get_time() == event.get_time() && current.get_name() == event.get_name();
+    });
+
+    if (existing != eventsForUser.end()) {
+        *existing = event;
+    } else {
+        eventsForUser.push_back(event);
+    }
+}
+
+std::string StompProtocol::canonicalOwner(const Event& event) {
+    const std::string& owner = event.get_event_owner();
+    return owner.empty() ? "unknown" : owner;
+}
+
+std::size_t StompProtocol::eventDetailScore(const Event& event) {
+    std::size_t score = 0;
+    score += event.get_game_updates().size();
+    score += event.get_team_a_updates().size();
+    score += event.get_team_b_updates().size();
+    if (!event.get_description().empty()) score += event.get_description().size();
+    if (!event.get_name().empty()) score += 1;
+    return score;
+}
+
+bool StompProtocol::timelineHasRequiredEvents(const std::vector<Event>& events) {
+    bool hasKickoff = false;
+    bool hasHalftime = false;
+    bool hasGoal = false;
+    bool hasFinalWhistle = false;
+
+    for (const Event& event : events) {
+        std::string lowered;
+        lowered.reserve(event.get_name().size());
+        for (char c : event.get_name()) {
+            lowered.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+        }
+
+        if (!hasKickoff && lowered.find("kickoff") != std::string::npos) hasKickoff = true;
+        if (!hasHalftime && lowered.find("halftime") != std::string::npos) hasHalftime = true;
+        if (!hasGoal && lowered.find("goal") != std::string::npos) hasGoal = true;
+        if (!hasFinalWhistle && lowered.find("final whistle") != std::string::npos) hasFinalWhistle = true;
+    }
+
+    return hasKickoff && hasHalftime && hasGoal && hasFinalWhistle;
+}
+
+std::vector<Event> StompProtocol::selectTimelineForSummary(const std::string& canonicalGame,
+                                                           const std::string& targetUser) const {
+    std::vector<Event> chosen;
+    auto gameIt = gameReports.find(canonicalGame);
+    if (gameIt == gameReports.end()) return chosen;
+
+    auto userIt = gameIt->second.find(targetUser);
+    if (userIt != gameIt->second.end()) {
+        chosen = userIt->second;
+        if (timelineHasRequiredEvents(chosen)) return chosen;
+    }
+
+    std::size_t bestScore = 0;
+    for (const auto& ownerEntry : gameIt->second) {
+        const std::string& owner = ownerEntry.first;
+        const std::vector<Event>& events = ownerEntry.second;
+        if (owner == targetUser) continue;
+        if (!timelineHasRequiredEvents(events)) continue;
+
+        std::size_t score = 0;
+        for (const Event& event : events) {
+            score += eventDetailScore(event);
+        }
+
+        if (score > bestScore) {
+            bestScore = score;
+            chosen = events;
+        }
+    }
+
+    if (!chosen.empty()) return chosen;
+
+    if (userIt != gameIt->second.end()) return userIt->second;
+
+    return chosen;
 }
 
 void StompProtocol::ensureSummaryFile(std::ofstream& outFile,
@@ -96,14 +181,14 @@ void StompProtocol::ensureSummaryFile(std::ofstream& outFile,
     std::map<std::string, std::string> teamBStats;
 
     for (const Event& e : userEvents) {
-        for (const auto& [key, val] : e.get_game_updates()) {
-            generalStats[key] = val;
+        for (const auto& entry : e.get_game_updates()) {
+            generalStats[entry.first] = entry.second;
         }
-        for (const auto& [key, val] : e.get_team_a_updates()) {
-            teamAStats[key] = val;
+        for (const auto& entry : e.get_team_a_updates()) {
+            teamAStats[entry.first] = entry.second;
         }
-        for (const auto& [key, val] : e.get_team_b_updates()) {
-            teamBStats[key] = val;
+        for (const auto& entry : e.get_team_b_updates()) {
+            teamBStats[entry.first] = entry.second;
         }
     }
 
@@ -111,35 +196,23 @@ void StompProtocol::ensureSummaryFile(std::ofstream& outFile,
     outFile << "Game stats:\n";
 
     outFile << "General stats:\n";
-    if (generalStats.empty()) {
-        outFile << "None\n";
-    } else {
-        for (const auto& [key, val] : generalStats) {
-            outFile << key << ": " << val << "\n";
-        }
+    for (const auto& entry : generalStats) {
+        outFile << entry.first << ": " << entry.second << "\n";
     }
 
     outFile << teamA << " stats:\n";
-    if (teamAStats.empty()) {
-        outFile << "None\n";
-    } else {
-        for (const auto& [key, val] : teamAStats) {
-            outFile << key << ": " << val << "\n";
-        }
+    for (const auto& entry : teamAStats) {
+        outFile << entry.first << ": " << entry.second << "\n";
     }
 
     outFile << teamB << " stats:\n";
-    if (teamBStats.empty()) {
-        outFile << "None\n";
-    } else {
-        for (const auto& [key, val] : teamBStats) {
-            outFile << key << ": " << val << "\n";
-        }
+    for (const auto& entry : teamBStats) {
+        outFile << entry.first << ": " << entry.second << "\n";
     }
 
     outFile << "Game event reports:\n";
     for (const Event& e : userEvents) {
-        outFile << e.get_time() << " - " << e.get_name() << "\n";
+        outFile << e.get_time() << " - " << e.get_name() << ":\n\n";
 
         std::string description = e.get_description();
         while (!description.empty() && (description.back() == '\n' || description.back() == '\r')) {
@@ -286,6 +359,8 @@ std::string StompProtocol::processInput(std::string input) {
 
         std::string destination = resolveDestinationForCanonical(canonicalGame);
         std::string allFrames = "";
+
+        gameReports[canonicalGame][currentUsername].clear();
         
         for (const Event& e : n_e.events) {
             Event localCopy = e;
@@ -302,18 +377,18 @@ std::string StompProtocol::processInput(std::string input) {
             allFrames += "time:" + std::to_string(e.get_time()) + "\n";
             
             allFrames += "general game updates:\n";
-            for (auto const& [key, val] : e.get_game_updates()) {
-                allFrames += "    " + key + ":" + val + "\n";
+            for (auto const& entry : e.get_game_updates()) {
+                allFrames += "    " + entry.first + ":" + entry.second + "\n";
             }
             
             allFrames += "team a updates:\n";
-            for (auto const& [key, val] : e.get_team_a_updates()) {
-                allFrames += "    " + key + ":" + val + "\n";
+            for (auto const& entry : e.get_team_a_updates()) {
+                allFrames += "    " + entry.first + ":" + entry.second + "\n";
             }
             
             allFrames += "team b updates:\n";
-            for (auto const& [key, val] : e.get_team_b_updates()) {
-                allFrames += "    " + key + ":" + val + "\n";
+            for (auto const& entry : e.get_team_b_updates()) {
+                allFrames += "    " + entry.first + ":" + entry.second + "\n";
             }
             
             allFrames += "description:\n" + e.get_description() + "\n";
@@ -338,28 +413,28 @@ std::string StompProtocol::processInput(std::string input) {
             return "";
         }
 
-        std::vector<Event> userEvents;
-        auto gameIt = gameReports.find(canonical);
-        if (gameIt != gameReports.end()) {
-            for (const Event& e : gameIt->second) {
-                if (e.get_event_owner() == targetUser) {
-                    userEvents.push_back(e);
-                }
-            }
-        }
+        std::vector<Event> timeline = selectTimelineForSummary(canonical, targetUser);
 
-        if (userEvents.empty()) {
+        if (timeline.empty()) {
             outFile << "No events found for user " << targetUser << " in game " << words[1] << "\n";
             outFile.close();
             std::cout << "Summary written to " << filePath << std::endl;
             return "";
         }
 
-        std::sort(userEvents.begin(), userEvents.end(), [](const Event& a, const Event& b) {
-            return a.get_time() < b.get_time();
+        std::sort(timeline.begin(), timeline.end(), [](const Event& a, const Event& b) {
+            if (a.get_time() != b.get_time()) return a.get_time() < b.get_time();
+            return a.get_name() < b.get_name();
         });
 
-        ensureSummaryFile(outFile, userEvents.front().get_team_a_name(), userEvents.front().get_team_b_name(), userEvents);
+        if (!timelineHasRequiredEvents(timeline)) {
+            outFile.close();
+            std::cout << "Summary for " << resolveDestinationForCanonical(canonical)
+                      << " is not ready yet. Waiting for additional events." << std::endl;
+            return "";
+        }
+
+        ensureSummaryFile(outFile, timeline.front().get_team_a_name(), timeline.front().get_team_b_name(), timeline);
         outFile.close();
         std::cout << "Summary written to " << filePath << std::endl;
         return "";

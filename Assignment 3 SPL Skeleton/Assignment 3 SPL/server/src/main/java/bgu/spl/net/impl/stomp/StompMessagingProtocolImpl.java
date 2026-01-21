@@ -58,48 +58,60 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
 
     private void handleConnect(Frame frame) {
         if (loggedIn) {
-            sendErrorAndClose(frame, "User already logged in", frame.headers.get("receipt"), frame.raw);
+            sendErrorAndClose(frame, "User already logged in", receiptHeader(frame), frame.raw);
             return;
         }
 
-        String login = frame.headers.get("login");
-        String passcode = frame.headers.get("passcode");
+        String login = header(frame, "login");
+        String passcode = header(frame, "passcode");
         if (login == null || passcode == null) {
-            sendErrorAndClose(frame, "Missing login or passcode", frame.headers.get("receipt"), frame.raw);
+            sendErrorAndClose(frame, "Missing login or passcode", receiptHeader(frame), frame.raw);
             return;
         }
 
-        Connections.LoginResult res = connections.tryLogin(login, passcode, connectionId);
+        Connections.LoginResult result = connections.tryLogin(login, passcode, connectionId);
 
-        if (res == Connections.LoginResult.WRONG_PASSWORD) {
-            sendErrorAndClose(frame, "Wrong password", frame.headers.get("receipt"), frame.raw);
+        if (result == Connections.LoginResult.WRONG_PASSWORD) {
+            sendErrorAndClose(frame, "Wrong password", receiptHeader(frame), frame.raw);
             return;
         }
-        if (res == Connections.LoginResult.ALREADY_LOGGED_IN) {
-            sendErrorAndClose(frame, "User already logged in", frame.headers.get("receipt"), frame.raw);
+        if (result == Connections.LoginResult.ALREADY_LOGGED_IN) {
+            sendErrorAndClose(frame, "User already logged in", receiptHeader(frame), frame.raw);
             return;
         }
 
         loggedIn = true;
         username = login;
 
-        // SQL logging
         Database.getInstance().login(connectionId, username, passcode);
 
         connections.send(connectionId, "CONNECTED\nversion:1.2\n\n");
         maybeSendReceipt(frame);
     }
 
-    private void handleSubscribe(Frame frame) {
-        String dest = frame.headers.get("destination");
-        String id = frame.headers.get("id");
-        if (dest == null || id == null) {
-            sendErrorAndClose(frame, "Missing destination or id", frame.headers.get("receipt"), frame.raw);
+    private void handleDisconnect(Frame frame) {
+        String receipt = receiptHeader(frame);
+        if (receipt == null) {
+            sendErrorAndClose(frame, "DISCONNECT must include receipt header", null, frame.raw);
             return;
         }
 
-        if (!connections.subscribe(dest, connectionId, id)) {
-            sendErrorAndClose(frame, "Subscription id already exists", frame.headers.get("receipt"), frame.raw);
+        Database.getInstance().logout(connectionId);
+
+        connections.send(connectionId, "RECEIPT\nreceipt-id:" + receipt + "\n\n");
+        shouldTerminate = true;
+    }
+
+    private void handleSubscribe(Frame frame) {
+        String destination = header(frame, "destination");
+        String subscriptionId = header(frame, "id");
+        if (destination == null || subscriptionId == null) {
+            sendErrorAndClose(frame, "Missing destination or id", receiptHeader(frame), frame.raw);
+            return;
+        }
+
+        if (!connections.subscribe(destination, connectionId, subscriptionId)) {
+            sendErrorAndClose(frame, "Subscription id already exists", receiptHeader(frame), frame.raw);
             return;
         }
 
@@ -107,14 +119,14 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
     }
 
     private void handleUnsubscribe(Frame frame) {
-        String id = frame.headers.get("id");
-        if (id == null) {
-            sendErrorAndClose(frame, "Missing id", frame.headers.get("receipt"), frame.raw);
+        String subscriptionId = header(frame, "id");
+        if (subscriptionId == null) {
+            sendErrorAndClose(frame, "Missing id", receiptHeader(frame), frame.raw);
             return;
         }
 
-        if (connections.unsubscribe(id, connectionId) == null) {
-            sendErrorAndClose(frame, "Subscription ID not found", frame.headers.get("receipt"), frame.raw);
+        if (connections.unsubscribe(subscriptionId, connectionId) == null) {
+            sendErrorAndClose(frame, "Subscription ID not found", receiptHeader(frame), frame.raw);
             return;
         }
 
@@ -122,56 +134,41 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
     }
 
     private void handleSend(Frame frame) {
-        String dest = frame.headers.get("destination");
-        if (dest == null) {
-            sendErrorAndClose(frame, "Missing destination", frame.headers.get("receipt"), frame.raw);
+        String destination = header(frame, "destination");
+        if (destination == null) {
+            sendErrorAndClose(frame, "Missing destination", receiptHeader(frame), frame.raw);
             return;
         }
 
-        boolean isSubscribed = connections.isSubscribed(connectionId, dest);
-        if (!isSubscribed) {
-            sendErrorAndClose(frame, "User not subscribed to topic", frame.headers.get("receipt"), frame.raw);
+        boolean subscribed = connections.isSubscribed(connectionId, destination);
+        if (!subscribed) {
+            sendErrorAndClose(frame, "User not subscribed to topic", receiptHeader(frame), frame.raw);
             return;
         }
 
-        String body = frame.body == null ? "" : frame.body;
-        int msgId = connections.nextMessageId();
-        Map<Integer, String> subs = connections.getChannelSubscribersSnapshot(dest);
+        String payload = frame.body == null ? "" : frame.body;
+        int messageId = connections.nextMessageId();
+        Map<Integer, String> subscribers = connections.getChannelSubscribersSnapshot(destination);
 
-        for (Map.Entry<Integer, String> e : subs.entrySet()) {
-            String msg =
+        for (Map.Entry<Integer, String> entry : subscribers.entrySet()) {
+            String message =
                     "MESSAGE\n" +
-                    "destination:" + dest + "\n" +
-                    "subscription:" + e.getValue() + "\n" +
-                    "message-id:" + msgId + "\n\n" +
-                    body;
-            connections.send(e.getKey(), msg);
+                    "destination:" + destination + "\n" +
+                    "subscription:" + entry.getValue() + "\n" +
+                    "message-id:" + messageId + "\n\n" +
+                    payload;
+            connections.send(entry.getKey(), message);
         }
 
-        // Log file report to SQL
-        Database.getInstance().trackFileUpload(username, "unknown-file", dest);
+        Database.getInstance().trackFileUpload(username, "unknown-file", destination);
 
         maybeSendReceipt(frame);
     }
 
-    private void handleDisconnect(Frame frame) {
-        String receipt = frame.headers.get("receipt");
-        if (receipt == null) {
-            sendErrorAndClose(frame, "DISCONNECT must include receipt header", null, frame.raw);
-            return;
-        }
-
-        // SQL logout
-        Database.getInstance().logout(connectionId);
-
-        connections.send(connectionId, "RECEIPT\nreceipt-id:" + receipt + "\n\n");
-        shouldTerminate = true;
-    }
-
     private void maybeSendReceipt(Frame frame) {
-        String r = frame.headers.get("receipt");
-        if (r != null) {
-            connections.send(connectionId, "RECEIPT\nreceipt-id:" + r + "\n\n");
+        String receipt = receiptHeader(frame);
+        if (receipt != null) {
+            connections.send(connectionId, "RECEIPT\nreceipt-id:" + receipt + "\n\n");
         }
     }
 
@@ -182,6 +179,14 @@ public class StompMessagingProtocolImpl implements StompMessagingProtocol<String
         if (raw != null) sb.append("The message:\n-----\n").append(stripNull(raw)).append("\n-----\n");
         connections.send(connectionId, sb.toString());
         shouldTerminate = true;
+    }
+
+    private String header(Frame frame, String name) {
+        return frame.headers.get(name);
+    }
+
+    private String receiptHeader(Frame frame) {
+        return header(frame, "receipt");
     }
 
     private static String stripNull(String s) {

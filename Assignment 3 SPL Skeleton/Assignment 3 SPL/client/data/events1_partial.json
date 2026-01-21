@@ -5,6 +5,7 @@
         {
             "event name": "kickoff",
             "time": 0,
+            "event owner": "",
             "general game updates": {
                 "active": true
             },
@@ -15,6 +16,7 @@
         {
             "event name": "goal!!!!",
             "time": 1980,
+            "event owner": "",
             "general game updates": {},
             "team a updates": {
                 "goals": "1",

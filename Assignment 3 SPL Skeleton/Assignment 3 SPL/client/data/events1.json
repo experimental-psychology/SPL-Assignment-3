@@ -5,6 +5,7 @@
         {
             "event name": "kickoff",
             "time": 0,
+            "event owner": "",
             "general game updates": {
                 "active": true,
                 "before halftime": true
@@ -16,6 +17,7 @@
         {
             "event name": "goal!!!!",
             "time": 1980,
+            "event owner": "",
             "general game updates": {},
             "team a updates": {
                 "goals": "1",
@@ -29,6 +31,7 @@
         {
             "event name": "Another goal!!!!",
             "time": 2940,
+            "event owner": "",
             "general game updates": {},
             "team a updates": {
                 "goals": "2"
@@ -40,6 +43,7 @@
         {
             "event name": "No goal",
             "time": 3000,
+            "event owner": "",
             "general game updates": {},
             "team a updates": {
                 "goals": "1"
@@ -53,6 +57,7 @@
         {
             "event name": "halftime",
             "time": 3060,
+            "event owner": "",
             "general game updates": {"before halftime": false},
             "team a updates": {},
             "team b updates": {},
@@ -61,6 +66,7 @@
         {
             "event name": "goalgoalgoalgoalgoal!!!",
             "time": 4500,
+            "event owner": "",
             "general game updates": {},
             "team a updates": {
                 "possession": "55%"
@@ -74,6 +80,7 @@
         {
             "event name": "goalgoalgoalgoalgoal!!!",
             "time": 4980,
+            "event owner": "",
             "general game updates": {},
             "team a updates": {
                 "possession": "51%"
@@ -87,6 +94,7 @@
         {
             "event name": "final whistle",
             "time": 5400,
+            "event owner": "",
             "general game updates": {
                 "active": false
             },

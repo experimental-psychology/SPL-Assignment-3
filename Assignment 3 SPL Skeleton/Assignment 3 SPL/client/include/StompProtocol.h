@@ -18,7 +18,11 @@ private:
     std::map<int, std::string> receiptIdToCommand;
     std::map<std::string, std::string> canonicalToDestination;
 
-    std::map<std::string, std::vector<Event>> gameReports;
+    std::map<std::string, std::map<std::string, std::vector<Event>>> gameReports;
+    static bool timelineHasRequiredEvents(const std::vector<Event>& events);
+    std::vector<Event> selectTimelineForSummary(const std::string& canonicalGame, const std::string& targetUser) const;
+    static std::string canonicalOwner(const Event& event);
+    static std::size_t eventDetailScore(const Event& event);
     
     bool shouldTerminate;
 

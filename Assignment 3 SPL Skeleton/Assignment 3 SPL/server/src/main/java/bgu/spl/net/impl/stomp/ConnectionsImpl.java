@@ -1,4 +1,3 @@
-// bgu/spl/net/impl/stomp/ConnectionsImpl.java
 package bgu.spl.net.impl.stomp;
 
 import bgu.spl.net.srv.ConnectionHandler;
@@ -16,7 +15,6 @@ public class ConnectionsImpl<T> implements Connections<T> {
     private final ConcurrentHashMap<String, ConcurrentHashMap<Integer, String>> channelSubscribers = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Integer, ConcurrentHashMap<String, String>> clientSubscriptions = new ConcurrentHashMap<>();
 
-    // Users state
     private final ConcurrentHashMap<String, String> users = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Integer> activeUsers = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Integer, String> connToUser = new ConcurrentHashMap<>();
@@ -33,22 +31,28 @@ public class ConnectionsImpl<T> implements Connections<T> {
 
     @Override
     public void send(String channel, T msg) {
-        Map<Integer, String> subs = getChannelSubscribersSnapshot(channel);
-        for (Integer id : subs.keySet()) {
-            send(id, msg);
+        Map<Integer, String> subscribers = getChannelSubscribersSnapshot(channel);
+        for (Integer subscriberId : subscribers.keySet()) {
+            send(subscriberId, msg);
         }
+    }
+
+    public void connect(int connectionId, ConnectionHandler<T> handler) {
+        ConnectionHandler<T> previous = connectedHandlers.put(connectionId, handler);
+        if (previous != null && previous != handler) {
+            closeQuietly(previous);
+        }
+        clientSubscriptions.computeIfAbsent(connectionId, key -> new ConcurrentHashMap<>());
     }
 
     @Override
     public void disconnect(int connectionId) {
         ConnectionHandler<T> handler = connectedHandlers.remove(connectionId);
-        if (handler != null) {
-            try { handler.close(); } catch (IOException ignored) {}
-        }
+        closeQuietly(handler);
 
-        ConcurrentHashMap<String, String> userSubs = clientSubscriptions.remove(connectionId);
-        if (userSubs != null) {
-            for (String channel : userSubs.values()) {
+        ConcurrentHashMap<String, String> subscriptions = clientSubscriptions.remove(connectionId);
+        if (subscriptions != null) {
+            for (String channel : subscriptions.values()) {
                 removeSubscriberFromChannel(channel, connectionId);
             }
         }
@@ -56,21 +60,10 @@ public class ConnectionsImpl<T> implements Connections<T> {
         logout(connectionId);
     }
 
-    // Called by BaseServer/Reactor when a new handler is created
-    public void connect(int connectionId, ConnectionHandler<T> handler) {
-        ConnectionHandler<T> old = connectedHandlers.put(connectionId, handler);
-        if (old != null && old != handler) {
-            try { old.close(); } catch (IOException ignored) {}
-        }
-        clientSubscriptions.computeIfAbsent(connectionId, k -> new ConcurrentHashMap<>());
-    }
-
     @Override
     public int nextMessageId() {
         return messageIdCounter.incrementAndGet();
     }
-
-    // --- Login Logic ---
 
     @Override
     public synchronized LoginResult tryLogin(String username, String password, int connectionId) {
@@ -78,14 +71,11 @@ public class ConnectionsImpl<T> implements Connections<T> {
             return LoginResult.WRONG_PASSWORD;
         }
 
-        // בדיקה/הוספה של המשתמש והסיסמה
-        String expected = users.putIfAbsent(username, password);
-        if (expected != null && !expected.equals(password)) {
+        String storedPassword = users.putIfAbsent(username, password);
+        if (storedPassword != null && !storedPassword.equals(password)) {
             return LoginResult.WRONG_PASSWORD;
         }
 
-        // בדיקה אטומית אם המשתמש כבר מחובר
-        // אם הוא כבר שם - הפעולה תחזיר את ה-ID הקיים ולא null
         if (activeUsers.putIfAbsent(username, connectionId) != null) {
             return LoginResult.ALREADY_LOGGED_IN;
         }
@@ -101,21 +91,19 @@ public class ConnectionsImpl<T> implements Connections<T> {
         }
     }
 
-    // --- Subscription Logic ---
-
     @Override
     public boolean subscribe(String channel, int connectionId, String subscriptionId) {
         if (channel == null || subscriptionId == null) return false;
 
-        ConcurrentHashMap<String, String> userSubs =
-                clientSubscriptions.computeIfAbsent(connectionId, k -> new ConcurrentHashMap<>());
-        ConcurrentHashMap<Integer, String> subsForChannel =
-                channelSubscribers.computeIfAbsent(channel, k -> new ConcurrentHashMap<>());
+        ConcurrentHashMap<String, String> userSubscriptions =
+                clientSubscriptions.computeIfAbsent(connectionId, key -> new ConcurrentHashMap<>());
+        ConcurrentHashMap<Integer, String> channelSubscriptions =
+                channelSubscribers.computeIfAbsent(channel, key -> new ConcurrentHashMap<>());
 
-        if (userSubs.putIfAbsent(subscriptionId, channel) != null) return false;
+        if (userSubscriptions.putIfAbsent(subscriptionId, channel) != null) return false;
 
-        if (subsForChannel.putIfAbsent(connectionId, subscriptionId) != null) {
-            userSubs.remove(subscriptionId);
+        if (channelSubscriptions.putIfAbsent(connectionId, subscriptionId) != null) {
+            userSubscriptions.remove(subscriptionId);
             return false;
         }
 
@@ -124,10 +112,10 @@ public class ConnectionsImpl<T> implements Connections<T> {
 
     @Override
     public String unsubscribe(String subscriptionId, int connectionId) {
-        ConcurrentHashMap<String, String> userSubs = clientSubscriptions.get(connectionId);
-        if (userSubs == null) return null;
+        ConcurrentHashMap<String, String> userSubscriptions = clientSubscriptions.get(connectionId);
+        if (userSubscriptions == null) return null;
 
-        String channel = userSubs.remove(subscriptionId);
+        String channel = userSubscriptions.remove(subscriptionId);
         if (channel == null) return null;
 
         removeSubscriberFromChannel(channel, connectionId);
@@ -135,24 +123,32 @@ public class ConnectionsImpl<T> implements Connections<T> {
     }
 
     private void removeSubscriberFromChannel(String channel, int connectionId) {
-        ConcurrentHashMap<Integer, String> subs = channelSubscribers.get(channel);
-        if (subs != null) {
-            subs.remove(connectionId);
-            if (subs.isEmpty()) {
-                channelSubscribers.compute(channel, (k, v) -> (v == subs && v.isEmpty()) ? null : v);
+        ConcurrentHashMap<Integer, String> subscribers = channelSubscribers.get(channel);
+        if (subscribers != null) {
+            subscribers.remove(connectionId);
+            if (subscribers.isEmpty()) {
+                channelSubscribers.compute(channel, (key, current) -> (current == subscribers && current.isEmpty()) ? null : current);
             }
         }
     }
 
     @Override
     public boolean isSubscribed(int connectionId, String channel) {
-        ConcurrentHashMap<Integer, String> subs = channelSubscribers.get(channel);
-        return subs != null && subs.containsKey(connectionId);
+        ConcurrentHashMap<Integer, String> subscribers = channelSubscribers.get(channel);
+        return subscribers != null && subscribers.containsKey(connectionId);
     }
 
     @Override
     public Map<Integer, String> getChannelSubscribersSnapshot(String channel) {
-        ConcurrentHashMap<Integer, String> subs = channelSubscribers.get(channel);
-        return (subs == null || subs.isEmpty()) ? new HashMap<>() : new HashMap<>(subs);
+        ConcurrentHashMap<Integer, String> subscribers = channelSubscribers.get(channel);
+        return (subscribers == null || subscribers.isEmpty()) ? new HashMap<>() : new HashMap<>(subscribers);
+    }
+
+    private void closeQuietly(ConnectionHandler<T> handler) {
+        if (handler == null) return;
+        try {
+            handler.close();
+        } catch (IOException ignored) {
+        }
     }
 }

@@ -5,17 +5,13 @@ import bgu.spl.net.api.MessageEncoderDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
-/**
- * STOMP frames are terminated by the null character '\0'.
- */
 public class StompMessageEncoderDecoder implements MessageEncoderDecoder<String> {
 
-    private byte[] bytes = new byte[1 << 10]; // 1KB initial buffer
-    private int len = 0;
+    private byte[] buffer = new byte[1 << 10];
+    private int bufferLength = 0;
 
     @Override
     public String decodeNextByte(byte nextByte) {
-        // frame ends on '\0'  :contentReference[oaicite:7]{index=7}
         if (nextByte == '\0') {
             String result = popString();
             System.out.println("[DECODER] Got complete message: " + result.replace("\n", "\\n"));
@@ -28,21 +24,24 @@ public class StompMessageEncoderDecoder implements MessageEncoderDecoder<String>
     @Override
     public byte[] encode(String message) {
         if (message == null) message = "";
-        // ensure terminator
         if (!message.endsWith("\0")) message += "\0";
         return message.getBytes(StandardCharsets.UTF_8);
     }
 
     private void pushByte(byte nextByte) {
-        if (len >= bytes.length) {
-            bytes = Arrays.copyOf(bytes, len * 2);
-        }
-        bytes[len++] = nextByte;
+        ensureCapacity();
+        buffer[bufferLength++] = nextByte;
     }
 
     private String popString() {
-        String result = new String(bytes, 0, len, StandardCharsets.UTF_8);
-        len = 0;
+        String result = new String(buffer, 0, bufferLength, StandardCharsets.UTF_8);
+        bufferLength = 0;
         return result;
+    }
+
+    private void ensureCapacity() {
+        if (bufferLength >= buffer.length) {
+            buffer = Arrays.copyOf(buffer, bufferLength * 2);
+        }
     }
 }
