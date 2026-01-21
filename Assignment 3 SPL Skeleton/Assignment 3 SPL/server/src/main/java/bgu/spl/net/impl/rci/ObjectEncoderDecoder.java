@@ -18,9 +18,9 @@ public class ObjectEncoderDecoder implements MessageEncoderDecoder<Serializable>
 
     @Override
     public Serializable decodeNextByte(byte nextByte) {
-        if (objectBytes == null) { //indicates that we are still reading the length
+        if (objectBytes == null) { 
             lengthBuffer.put(nextByte);
-            if (!lengthBuffer.hasRemaining()) { //we read 4 bytes and therefore can take the length
+            if (!lengthBuffer.hasRemaining()) { 
                 lengthBuffer.flip();
                 objectBytes = new byte[lengthBuffer.getInt()];
                 objectBytesIndex = 0;
@@ -57,7 +57,6 @@ public class ObjectEncoderDecoder implements MessageEncoderDecoder<Serializable>
         try {
             ByteArrayOutputStream bytes = new ByteArrayOutputStream();
 
-            //placeholder for the object size
             for (int i = 0; i < 4; i++) {
                 bytes.write(0);
             }
@@ -67,7 +66,6 @@ public class ObjectEncoderDecoder implements MessageEncoderDecoder<Serializable>
             out.flush();
             byte[] result = bytes.toByteArray();
 
-            //now write the object size
             ByteBuffer.wrap(result).putInt(result.length - 4);
             return result;
 

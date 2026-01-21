@@ -15,12 +15,12 @@ try:
     if result == 0:
         print("✓ Port 7777 is OPEN")
         
-        # Send CONNECT
+        
         connect_frame = "CONNECT\naccept-version:1.2\nhost:stomp.cs.bgu.ac.il\nlogin:testuser\npasscode:testpass\n\n\x00"
         sock.sendall(connect_frame.encode())
         print("✓ Sent CONNECT frame")
         
-        # Receive response
+        
         data = sock.recv(1024)
         print(f"✓ Received response: {len(data)} bytes")
         print(f"Response content:\n{data.decode('utf-8', errors='replace')}")

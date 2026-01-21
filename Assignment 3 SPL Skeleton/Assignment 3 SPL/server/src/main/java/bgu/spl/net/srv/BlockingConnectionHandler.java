@@ -51,7 +51,6 @@ public class BlockingConnectionHandler<T> implements Runnable, ConnectionHandler
                 }
             }
         } catch (IOException ex) {
-            // שגיאת IO - חיבור נסגר
         } finally {
             connected = false;
             connections.disconnect(connectionId);
@@ -77,7 +76,6 @@ public class BlockingConnectionHandler<T> implements Runnable, ConnectionHandler
                 out.flush();
             } catch (IOException e) {
                 connected = false;
-                // תיקון: סגירת הסוקט כדי לשחרר את ה-read החוסם
                 try {
                     sock.close();
                 } catch (IOException ignored) {

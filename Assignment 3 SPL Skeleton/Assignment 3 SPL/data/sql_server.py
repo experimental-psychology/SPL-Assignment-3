@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Basic Python Server for STOMP Assignment – Stage 3.3
 
@@ -14,8 +13,8 @@ import sqlite3
 import datetime
 
 
-SERVER_NAME = "STOMP_PYTHON_SQL_SERVER"  # DO NOT CHANGE!
-DB_FILE = "stomp_server.db"              # DO NOT CHANGE!
+SERVER_NAME = "STOMP_PYTHON_SQL_SERVER"  
+DB_FILE = "stomp_server.db"              
 
 
 def recv_null_terminated(sock: socket.socket) -> str:

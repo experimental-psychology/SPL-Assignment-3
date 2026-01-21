@@ -57,14 +57,10 @@ public class Reactor<T> implements Server<T> {
             while (!Thread.currentThread().isInterrupted()) {
                 selector.select();
                 runSelectionThreadTasks();
-
-                // תיקון 1: שימוש ב-Iterator עם remove מיידי
                 Iterator<SelectionKey> iter = selector.selectedKeys().iterator();
                 while (iter.hasNext()) {
                     SelectionKey key = iter.next();
-                    iter.remove(); // הסרה מיידית - מונע לולאה אינסופית במקרה של חריגה
-
-                    // תיקון 3: try-catch פנימי למניעת קריסת השרת
+                    iter.remove(); 
                     try {
                        if (!key.isValid()) {
                             cleanupKey(key);
@@ -84,7 +80,6 @@ public class Reactor<T> implements Server<T> {
             }
 
         } catch (ClosedSelectorException ex) {
-            // סגירה רגילה
         } catch (IOException ex) {
             ex.printStackTrace();
         }
@@ -152,23 +147,15 @@ public class Reactor<T> implements Server<T> {
             handler.continueWrite();
         }
     }
-    /**
-     * תיקון 2: מתודה לסגירה מסודרת של חיבור - כולל disconnect מפורש
-     */
     private void cleanupConnection(SelectionKey key, NonBlockingConnectionHandler<T> handler) {
         if (key != null) {
             key.cancel();
         }
         
-        // ניקוי יחיד דרך מנהל החיבורים.
-        // ConnectionsImpl.disconnect כבר מבצע handler.close() שמבצע channel.close().
         if (handler != null) {
             connections.disconnect(handler.getConnectionId());
         }
     }
-    /**
-     * ניקוי כללי במקרה של שגיאה
-     */
     private void cleanupKey(SelectionKey key) {
         if (key == null) return;
         NonBlockingConnectionHandler<T> handler =

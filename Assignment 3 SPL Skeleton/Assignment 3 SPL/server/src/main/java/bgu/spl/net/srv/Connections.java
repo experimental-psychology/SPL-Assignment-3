@@ -1,4 +1,3 @@
-// bgu/spl/net/srv/Connections.java
 package bgu.spl.net.srv;
 
 import java.util.Map;
@@ -11,8 +10,6 @@ public interface Connections<T> {
 
     void disconnect(int connectionId);
 
-    // --- Additions for Protocol Logic (No Casting) ---
-
     boolean subscribe(String channel, int connectionId, String subscriptionId);
 
     String unsubscribe(String subscriptionId, int connectionId);
@@ -22,8 +19,6 @@ public interface Connections<T> {
     int nextMessageId();
 
     Map<Integer, String> getChannelSubscribersSnapshot(String channel);
-
-    // --- Login Support in Interface ---
 
     enum LoginResult {
         SUCCESS,

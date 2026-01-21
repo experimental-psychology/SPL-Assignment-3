@@ -309,7 +309,6 @@ std::string StompProtocol::processInput(std::string input) {
             std::string frame = "UNSUBSCRIBE\nid:" + std::to_string(subId) + "\nreceipt:" + std::to_string(recId) + "\n\n";
             return frame;
         } else {
-            // No channel specified - disconnect from server (logout)
             int recId = receiptCounter++;
             receiptIdToCommand[recId] = "logout";
             shouldTerminate = true;
@@ -366,21 +365,16 @@ std::string StompProtocol::processInput(std::string input) {
             Event localCopy = e;
             localCopy.set_event_owner(currentUsername);
             storeEvent(canonicalGame, localCopy);
-
             allFrames += "SEND\ndestination:/" + destination + "\n\n";
-            
-            // Body: all the event data
             allFrames += "user:" + currentUsername + "\n";
             allFrames += "team a:" + e.get_team_a_name() + "\n";
             allFrames += "team b:" + e.get_team_b_name() + "\n";
             allFrames += "event name:" + e.get_name() + "\n";
             allFrames += "time:" + std::to_string(e.get_time()) + "\n";
-            
             allFrames += "general game updates:\n";
             for (auto const& entry : e.get_game_updates()) {
                 allFrames += "    " + entry.first + ":" + entry.second + "\n";
             }
-            
             allFrames += "team a updates:\n";
             for (auto const& entry : e.get_team_a_updates()) {
                 allFrames += "    " + entry.first + ":" + entry.second + "\n";

@@ -9,7 +9,7 @@ public class NewsFeedClientMain {
             args = new String[]{"127.0.0.1"};
         }
 
-//        System.out.println("running clients");
+
         runFirstClient(args[0]);
         runSecondClient(args[0]);
         runThirdClient(args[0]);
@@ -21,19 +21,19 @@ public class NewsFeedClientMain {
                     "jobs",
                     "System Programmer, knowledge in C++, Java and Python required. call 0x134693F"));
 
-            c.receive(); //ok
+            c.receive(); 
 
             c.send(new PublishNewsCommand(
                     "headlines",
                     "new SPL assignment is out soon!!"));
 
-            c.receive(); //ok
+            c.receive(); 
 
             c.send(new PublishNewsCommand(
                     "headlines",
                     "THE CAKE IS A LIE!"));
 
-            c.receive(); //ok
+            c.receive(); 
         }
 
     }

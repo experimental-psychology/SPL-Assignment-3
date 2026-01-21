@@ -95,8 +95,6 @@ names_and_events parseEventsFile(std::string json_path)
 
     std::string team_a_name = data["team a"];
     std::string team_b_name = data["team b"];
-
-    // run over all the events and convert them to Event objects
     std::vector<Event> events;
     for (auto &event : data["events"])
     {
