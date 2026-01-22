@@ -40,6 +40,7 @@ Runs on port 7777 in TPC mode.
 
 ```bash
 cd client
+mkdir bin
 make StompWCIClient
 ./bin/StompWCIClient
 ```
@@ -50,11 +51,12 @@ make StompWCIClient
 login 127.0.0.1:7777 alice pass
 join Germany_Japan
 report data/events1.json
+summary Germany_Japan alice summary.txt
 logout
 
 login 127.0.0.1:7777 bob pass
 join Germany_Japan
-summary Germany_Japan alice summary_tpc.txt
+summary Germany_Japan bob summary_tpc.txt
 logout
 ```
 
